@@ -1,0 +1,116 @@
+const express = require("express");
+const nodemailer = require("nodemailer");
+const multer = require("multer");
+const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+require("dotenv").config(); // Load .env
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// ---------- CORS ----------
+app.use(cors({
+  origin: [
+    "https://sandipnanavati.com",
+    "http://127.0.0.1:5500",
+    "http://localhost:5500"
+  ],
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"],
+}));
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Ensure uploads folder exists
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+// ---------- Multer Setup ----------
+// For career form (resume upload)
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+});
+const upload = multer({ storage });
+
+// For contact form (text only)
+const contactUpload = multer().none();
+
+// ---------- Nodemailer Setup ----------
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp.hostinger.com",
+  port: parseInt(process.env.SMTP_PORT) || 465,
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER || "neel@taniyaweb.site",
+    pass: process.env.SMTP_PASS || "Client@2025n",
+  },
+});
+
+// Validate RECEIVER_EMAIL
+const RECEIVER_EMAIL = process.env.RECEIVER_EMAIL || process.env.SMTP_USER;
+if (!RECEIVER_EMAIL) {
+  console.error("❌ ERROR: RECEIVER_EMAIL not defined in .env");
+  process.exit(1);
+}
+
+// ---------- POST /backend/apply ----------
+app.post("/backend/apply", upload.single("resume"), async (req, res) => {
+  try {
+    const { name, email, phone, position, message } = req.body;
+    const resumeFile = req.file;
+
+    if (!resumeFile) {
+      return res.status(400).json({ success: false, message: "Resume file is required." });
+    }
+
+    const mailOptions = {
+      from: `"Job Application" <${process.env.SMTP_USER}>`,
+      to: RECEIVER_EMAIL,
+      subject: `New Job Application from ${name}`,
+      text: `Full Name: ${name}\nEmail: ${email}\nPhone: ${phone}\nPosition: ${position}\nMessage: ${message}`,
+      attachments: [{ filename: resumeFile.originalname, path: resumeFile.path }]
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    // Delete uploaded file after sending
+    fs.unlinkSync(resumeFile.path);
+
+    res.json({ success: true, message: "Application submitted successfully!" });
+  } catch (error) {
+    console.error("Career form error:", error);
+    res.status(500).json({ success: false, message: "Error submitting application." });
+  }
+});
+
+// ---------- POST /backend/contact ----------
+app.post("/backend/contact", contactUpload, async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    if (!name || !email || !phone || !message) {
+      return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    const mailOptions = {
+      from: `"Website Contact" <${process.env.SMTP_USER}>`,
+      to: RECEIVER_EMAIL,
+      subject: `New Contact Form Submission from ${name}`,
+      text: `Name: ${name}\nEmail: ${email}\nPhone: ${phone}\nMessage: ${message}`
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.json({ success: true, message: "Message sent successfully!" });
+  } catch (error) {
+    console.error("Contact form error:", error);
+    res.status(500).json({ success: false, message: "Error sending your message." });
+  }
+});
+
+// ---------- Start Server ----------
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
